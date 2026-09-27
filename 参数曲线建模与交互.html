@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>参数曲线建模与交互</title>
+<style>
+  :root{
+    --bg:#f1f5f9; --panel:#ffffff; --border:#e2e8f0;
+    --ink:#0f172a; --muted:#64748b; --accent:#2563eb;
+    --accent2:#14b8a6; --warn:#f59e0b; --red:#ef4444;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+    color:var(--ink); background:var(--bg);
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  header{
+    padding:10px 18px; background:var(--panel); border-bottom:1px solid var(--border);
+    display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+  }
+  header h1{font-size:18px; margin:0; font-weight:700}
+  header .sub{color:var(--muted); font-size:12.5px}
+  .main{flex:1; display:flex; min-height:0}
+  .canvas-wrap{flex:1; position:relative; min-width:0; background:#fff}
+  canvas{display:block}
+  .hint{
+    position:absolute; left:10px; bottom:8px; font-size:11.5px; color:var(--muted);
+    background:rgba(255,255,255,.85); padding:3px 9px; border-radius:6px;
+    border:1px solid var(--border); pointer-events:none; user-select:none;
+  }
+  #sidebar{
+    width:330px; flex:0 0 330px; background:var(--panel);
+    border-left:1px solid var(--border); overflow-y:auto; padding:14px;
+  }
+  section{margin-bottom:16px}
+  section > h2{
+    font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+    color:var(--muted); margin:0 0 8px; border-bottom:1px solid var(--border); padding-bottom:5px;
+  }
+  .modes{display:flex; flex-direction:column; gap:6px}
+  .mode-btn{
+    display:flex; align-items:center; gap:8px; padding:9px 12px; border-radius:8px;
+    border:1px solid var(--border); background:#fff; cursor:pointer; font-size:13.5px;
+    text-align:left; color:var(--ink); transition:.12s;
+  }
+  .mode-btn:hover{border-color:#bcd0f5; background:#f8fafc}
+  .mode-btn.active{background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600}
+  .mode-btn .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto;border:2px solid #fff;box-shadow:0 0 0 1px #0002}
+  .row{display:flex; align-items:center; gap:8px; margin:7px 0; font-size:13px}
+  .row label{flex:1; cursor:pointer}
+  .row input[type=range]{flex:1; min-width:0}
+  .row .val{width:38px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+  input[type=checkbox]{accent-color:var(--accent); width:15px; height:15px; cursor:pointer}
+  .btn{
+    padding:8px 12px; border-radius:7px; border:1px solid var(--border);
+    background:#fff; cursor:pointer; font-size:13px; transition:.12s;
+  }
+  .btn:hover{border-color:#bcd0f5; background:#f8fafc}
+  .btn.primary{background:var(--accent); color:#fff; border-color:var(--accent)}
+  .btn.danger:hover{background:#fef2f2; border-color:#fca5a5}
+  .actions{display:flex; flex-wrap:wrap; gap:6px}
+  .presets{display:flex; gap:6px; margin-top:8px}
+  .formula{font-size:12.5px; line-height:1.55; background:#f8fafc; border:1px solid var(--border);
+    border-radius:8px; padding:10px 12px; color:#1e293b}
+  .formula p{margin:6px 0}
+  .formula .note{color:var(--muted); font-size:11.5px}
+  .formula pre{
+    font-family:Consolas,"Courier New",monospace; font-size:11px; background:#0f172a; color:#e2e8f0;
+    padding:8px 10px; border-radius:6px; overflow-x:auto; margin:6px 0; line-height:1.35;
+  }
+  .legend{font-size:12.5px}
+  .legend .li{display:flex; align-items:center; gap:8px; margin:4px 0}
+  .legend .sw{width:14px; height:4px; border-radius:2px; flex:0 0 auto}
+  .legend .sw.sq{width:9px;height:9px;border-radius:2px}
+  .legend .sw.circle{width:9px;height:9px;border-radius:50%}
+  .help{font-size:12px; color:var(--muted); line-height:1.6}
+  .help b{color:var(--ink)}
+  .hint-empty{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    color:#cbd5e1; font-size:15px; pointer-events:none; user-select:none;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>参数曲线建模与交互</h1>
+  <span class="sub">线性插值 · Hermite · Catmull-Rom · 混合抛物线(Overhauser) · Bézier —— 支持相互转换</span>
+</header>
+
+<div class="main">
+  <div class="canvas-wrap" id="canvasWrap">
+    <canvas id="canvas"></canvas>
+    <div class="hint-empty" id="emptyHint">单击画布添加至少 2 个控制点</div>
+    <div class="hint">单击空白处：添加控制点 · 拖动：移动 · 右键：删除该点 · Del：删除选中</div>
+  </div>
+
+  <aside id="sidebar">
+    <section>
+      <h2>曲线类型</h2>
+      <div class="modes" id="modes"></div>
+    </section>
+
+    <section>
+      <h2>显示选项</h2>
+      <div class="row"><input type="checkbox" id="chkPolygon" checked><label for="chkPolygon">控制多边形</label></div>
+      <div class="row"><input type="checkbox" id="chkBezier" checked><label for="chkBezier">转换为 Bézier 控制点</label></div>
+      <div class="row" id="rowTangents"><input type="checkbox" id="chkTangents" checked><label for="chkTangents">切线手柄 (Hermite)</label></div>
+      <div class="row" id="rowParabolas"><input type="checkbox" id="chkParabolas" checked><label for="chkParabolas">两条被混合的抛物线</label></div>
+      <div class="row" id="rowTension">
+        <label for="tension">Catmull-Rom 张力 τ</label>
+        <input type="range" id="tension" min="0" max="1" step="0.05" value="0.5">
+        <span class="val" id="tensionVal">0.50</span>
+      </div>
+      <div class="row">
+        <label for="samples">采样精度</label>
+        <input type="range" id="samples" min="12" max="128" step="4" value="48">
+        <span class="val" id="samplesVal">48</span>
+      </div>
+    </section>
+
+    <section>
+      <h2>参数动画</h2>
+      <div class="row">
+        <button class="btn primary" id="btnPlay" style="flex:1">⏸ 暂停</button>
+        <button class="btn" id="btnReset">⟲ t=0</button>
+      </div>
+      <div class="row">
+        <label for="tSlider">参数 t</label>
+        <input type="range" id="tSlider" min="0" max="1" step="0.001" value="0">
+        <span class="val" id="tVal">0.000</span>
+      </div>
+      <div class="row">
+        <label for="speed">播放速度</label>
+        <input type="range" id="speed" min="0.1" max="1.5" step="0.1" value="0.4">
+        <span class="val" id="speedVal">0.4</span>
+      </div>
+    </section>
+
+    <section>
+      <h2>控制点操作</h2>
+      <div class="actions">
+        <button class="btn" id="btnAdd">＋ 添加</button>
+        <button class="btn" id="btnDelete">－ 删除选中</button>
+        <button class="btn" id="btnResetTan">⟲ 重置切线</button>
+        <button class="btn danger" id="btnClear">清空</button>
+      </div>
+      <div class="presets">
+        <button class="btn" data-preset="s">S 形</button>
+        <button class="btn" data-preset="wave">波浪</button>
+        <button class="btn" data-preset="arc">弧形(4点)</button>
+        <button class="btn" data-preset="loop">闭环</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>公式与转换</h2>
+      <div class="formula" id="formula"></div>
+    </section>
+
+    <section>
+      <h2>图例</h2>
+      <div class="legend">
+        <div class="li"><span class="sw" style="background:#2563eb"></span> 当前曲线</div>
+        <div class="li"><span class="sw circle" style="background:#0f172a"></span> 控制点 (P₀…Pₙ)</div>
+        <div class="li"><span class="sw" style="background:#cbd5e1;border:1px dashed #94a3b8"></span> 控制多边形</div>
+        <div class="li"><span class="sw sq" style="background:#f59e0b"></span> 等价的 Bézier 控制点（转换）</div>
+        <div class="li"><span class="sw circle" style="background:#14b8a6"></span> 切线手柄 (Hermite)</div>
+        <div class="li"><span class="sw" style="background:#10b981;opacity:.6"></span> 抛物线 f (P₀P₁P₂)</div>
+        <div class="li"><span class="sw" style="background:#f97316;opacity:.6"></span> 抛物线 g (P₁P₂P₃)</div>
+        <div class="li"><span class="sw circle" style="background:#ef4444"></span> 参数点 (t)</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>操作说明</h2>
+      <div class="help">
+        <b>左键单击空白处</b> 添加控制点；<b>拖动控制点</b> 移动；<b>右键</b> 或 <b>Del</b> 删除。<br>
+        Hermite 模式下每个点带有 <b>切线手柄</b>，拖动绿色圆点调整切向量；「重置切线」按 Catmull-Rom 规则 (P<sub>i+1</sub>−P<sub>i−1</sub>)/2 自动求切线。<br>
+        勾选「转换为 Bézier 控制点」可观察各曲线如何转为 Bézier 形式。
+      </div>
+    </section>
+  </aside>
+</div>
+
+<script>
+"use strict";
+
+/* ============ 常量与状态 ============ */
+const TAU = Math.PI * 2;
+const CURVE_COLOR = '#2563eb';
+const POINT_R = 7;      // 控制点半径(屏幕像素)
+const HIT_R = 14;       // 拾取半径
+const HANDLE_SCALE = 0.35; // 切线手柄显示比例(归一化空间)
+
+const state = {
+  mode: 'catmullrom',   // linear | hermite | catmullrom | overhauser | bezier
+  points: [],           // {x,y,tx,ty,manualTan}  归一化坐标 [0,1]
+  selected: -1,
+  hover: -1,
+  dragging: null,       // {type:'point'|'tan', index}
+  tension: 0.5,
+  samples: 48,
+  showPolygon: true,
+  showBezier: true,
+  showTangents: true,
+  showParabolas: true,
+  animate: true,
+  tGlobal: 0,
+  animSpeed: 0.4,       // 圈/秒
+};
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let W = 1000, H = 640;
+
+/* ============ 基础工具 ============ */
+function clamp(v, a, b){ return v < a ? a : (v > b ? b : v); }
+function lerp(a, b, t){ return a + (b - a) * t; }
+function lerpPt(a, b, t){ return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) }; }
+function S(p){ return { x: p.x * W, y: p.y * H }; }          // 归一化 -> 屏幕
+function tan(p){ return { x: p.tx, y: p.ty }; }
+
+/* ============ 曲线数学 ============ */
+
+// 线性插值（两点之间）
+function linear(p0, p1, t){ return lerpPt(p0, p1, t); }
+
+// Hermite 曲线（端点 + 切向量）
+function hermite(p0, t0, p1, t1, t){
+  const t2 = t * t, t3 = t2 * t;
+  const h00 =  2*t3 - 3*t2 + 1;
+  const h10 =    t3 - 2*t2 + t;
+  const h01 = -2*t3 + 3*t2;
+  const h11 =    t3 -   t2;
+  return {
+    x: h00*p0.x + h10*t0.x + h01*p1.x + h11*t1.x,
+    y: h00*p0.y + h10*t0.y + h01*p1.y + h11*t1.y
+  };
+}
+
+// Catmull-Rom 样条（张力 τ）
+function catmullRom(p0, p1, p2, p3, t, tau){
+  const t2 = t * t, t3 = t2 * t;
+  const c0 = -tau*t3 + 2*tau*t2 - tau*t;
+  const c1 = (2-tau)*t3 + (tau-3)*t2 + 1;
+  const c2 = (tau-2)*t3 + (3-2*tau)*t2 + tau*t;
+  const c3 =  tau*t3 - tau*t2;
+  return {
+    x: c0*p0.x + c1*p1.x + c2*p2.x + c3*p3.x,
+    y: c0*p0.y + c1*p1.y + c2*p2.y + c3*p3.y
+  };
+}
+
+// 混合抛物线 (Overhauser)：两条抛物线的线性混合
+// 抛物线 f 过 P0(u=0),P1(u=1),P2(u=2)；抛物线 g 过 P1(u=1),P2(u=2),P3(u=3)
+function parabola012(a, b, c, u){
+  const w0 = (u-1)*(u-2)/2, w1 = -u*(u-2), w2 = u*(u-1)/2;
+  return { x: w0*a.x + w1*b.x + w2*c.x, y: w0*a.y + w1*b.y + w2*c.y };
+}
+function parabola123(a, b, c, u){
+  const w0 = (u-2)*(u-3)/2, w1 = -(u-1)*(u-3), w2 = (u-1)*(u-2)/2;
+  return { x: w0*a.x + w1*b.x + w2*c.x, y: w0*a.y + w1*b.y + w2*c.y };
+}
+function overhauser(p0, p1, p2, p3, t){
+  const u = 1 + t;
+  const f = parabola012(p0, p1, p2, u);   // 过 P0 P1 P2
+  const g = parabola123(p1, p2, p3, u);   // 过 P1 P2 P3
+  return { x: (1-t)*f.x + t*g.x, y: (1-t)*f.y + t*g.y };
+}
+
+// Bézier（n 阶，De Casteljau 递推）
+function deCasteljau(pts, t){
+  const P = pts.map(p => ({ x: p.x, y: p.y }));
+  for (let r = 1; r < P.length; r++){
+    for (let i = 0; i < P.length - r; i++){
+      P[i] = { x: (1-t)*P[i].x + t*P[i+1].x, y: (1-t)*P[i].y + t*P[i+1].y };
+    }
+  }
+  return P[0];
+}
+
+/* ============ 分段求值 ============ */
+
+// 第 i 段（连接 P[i] 与 P[i+1]），局部参数 t∈[0,1]
+function evalSegment(i, t){
+  const pts = state.points, n = pts.length;
+  if (state.mode === 'linear')
+    return linear(pts[i], pts[i+1], t);
+  if (state.mode === 'hermite')
+    return hermite(pts[i], tan(pts[i]), pts[i+1], tan(pts[i+1]), t);
+  if (state.mode === 'catmullrom'){
+    const p0 = pts[Math.max(0, i-1)], p1 = pts[i], p2 = pts[i+1], p3 = pts[Math.min(n-1, i+2)];
+    return catmullRom(p0, p1, p2, p3, t, state.tension);
+  }
+  if (state.mode === 'overhauser'){
+    const p0 = pts[Math.max(0, i-1)], p1 = pts[i], p2 = pts[i+1], p3 = pts[Math.min(n-1, i+2)];
+    return overhauser(p0, p1, p2, p3, t);
+  }
+  return pts[i];
+}
+
+// 全局参数 s∈[0,1] 处求值（遍历所有段 / 整条 Bézier）
+function evalCurveAt(s){
+  const pts = state.points, n = pts.length;
+  if (n === 0) return null;
+  if (n === 1) return pts[0];
+  if (state.mode === 'bezier') return deCasteljau(pts, s);
+  const m = n - 1;
+  let seg = Math.floor(s * m);
+  if (seg >= m) seg = m - 1;
+  const t = s * m - seg;
+  return evalSegment(seg, t);
+}
+
+// 整条曲线的采样点（归一化坐标）
+function curveSamples(){
+  const n = state.points.length;
+  const out = [];
+  if (n < 2) return out;
+  const segs = (state.mode === 'bezier') ? 1 : (n - 1);
+  const total = segs * state.samples;
+  for (let k = 0; k <= total; k++) out.push(evalCurveAt(k / total));
+  return out;
+}
+
+/* ============ 各曲线 -> Bézier 控制点（转换） ============ */
+function bezierControlSegments(){
+  const pts = state.points, n = pts.length;
+  const segs = [];
+  if (n < 2) return segs;
+
+  if (state.mode === 'linear'){
+    for (let i = 0; i < n-1; i++) segs.push([{...pts[i]}, {...pts[i+1]}]);
+  }
+  else if (state.mode === 'hermite'){
+    for (let i = 0; i < n-1; i++){
+      const p0 = pts[i], p1 = pts[i+1];
+      segs.push([
+        { x:p0.x, y:p0.y },
+        { x:p0.x + p0.tx/3, y:p0.y + p0.ty/3 },
+        { x:p1.x - p1.tx/3, y:p1.y - p1.ty/3 },
+        { x:p1.x, y:p1.y }
+      ]);
+    }
+  }
+  else if (state.mode === 'catmullrom'){
+    const tau = state.tension;
+    for (let i = 0; i < n-1; i++){
+      const P0 = pts[Math.max(0, i-1)], P1 = pts[i], P2 = pts[i+1], P3 = pts[Math.min(n-1, i+2)];
+      segs.push([
+        { x:P1.x, y:P1.y },
+        { x:P1.x + tau*(P2.x-P0.x)/3, y:P1.y + tau*(P2.y-P0.y)/3 },
+        { x:P2.x - tau*(P3.x-P1.x)/3, y:P2.y - tau*(P3.y-P1.y)/3 },
+        { x:P2.x, y:P2.y }
+      ]);
+    }
+  }
+  else if (state.mode === 'overhauser'){
+    for (let i = 0; i < n-1; i++){
+      const P0 = pts[Math.max(0, i-1)], P1 = pts[i], P2 = pts[i+1], P3 = pts[Math.min(n-1, i+2)];
+      segs.push([
+        { x:P1.x, y:P1.y },
+        { x:P1.x + (P2.x-P0.x)/6, y:P1.y + (P2.y-P0.y)/6 },
+        { x:P2.x - (P3.x-P1.x)/6, y:P2.y - (P3.y-P1.y)/6 },
+        { x:P2.x, y:P2.y }
+      ]);
+    }
+  }
+  return segs;
+}
+
+/* ============ 控制点管理 ============ */
+function autoTangent(i){
+  const n = state.points.length;
+  if (n < 2) return { x:0, y:0 };
+  const a = state.points[Math.max(0, i-1)];
+  const b = state.points[Math.min(n-1, i+1)];
+  return { x:(b.x - a.x)/2, y:(b.y - a.y)/2 };
+}
+function recomputeAutoTangents(){
+  for (let i = 0; i < state.points.length; i++){
+    const p = state.points[i];
+    if (!p.manualTan){ const t = autoTangent(i); p.tx = t.x; p.ty = t.y; }
+  }
+}
+function addPoint(nx, ny){
+  state.points.push({ x: nx, y: ny, tx: 0, ty: 0, manualTan: false });
+  recomputeAutoTangents();
+  state.selected = state.points.length - 1;
+  draw();
+}
+function deletePoint(i){
+  if (i < 0 || i >= state.points.length) return;
+  state.points.splice(i, 1);
+  if (state.selected === i) state.selected = -1;
+  else if (state.selected > i) state.selected--;
+  recomputeAutoTangents();
+  draw();
+}
+function clearPoints(){
+  state.points = []; state.selected = -1; draw();
+}
+function setPreset(arr){
+  state.points = arr.map(([x,y]) => ({ x, y, tx:0, ty:0, manualTan:false }));
+  recomputeAutoTangents();
+  state.selected = -1; draw();
+}
+const PRESETS = {
+  s:     [[0.10,0.62],[0.24,0.30],[0.40,0.62],[0.56,0.34],[0.72,0.62],[0.88,0.42]],
+  wave:  [[0.08,0.50],[0.22,0.22],[0.38,0.74],[0.54,0.24],[0.70,0.72],[0.88,0.48]],
+  arc:   [[0.15,0.55],[0.34,0.22],[0.66,0.22],[0.85,0.55]],
+  loop:  [[0.20,0.35],[0.80,0.30],[0.75,0.75],[0.22,0.72]],
+};
+
+/* ============ 绘制 ============ */
+function drawGrid(){
+  ctx.strokeStyle = '#f1f5f9'; ctx.lineWidth = 1;
+  const step = 40;
+  ctx.beginPath();
+  for (let x = step; x < W; x += step){ ctx.moveTo(x+0.5,0); ctx.lineTo(x+0.5,H); }
+  for (let y = step; y < H; y += step){ ctx.moveTo(0,y+0.5); ctx.lineTo(W,y+0.5); }
+  ctx.stroke();
+}
+
+function drawControlPolygon(){
+  const n = state.points.length;
+  if (n < 2) return;
+  ctx.strokeStyle = 'rgba(148,163,184,0.7)';
+  ctx.setLineDash([6,5]); ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++){
+    const s = S(state.points[i]);
+    i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y);
+  }
+  ctx.stroke(); ctx.setLineDash([]);
+}
+
+function drawParabolas(){
+  const pts = state.points, n = pts.length;
+  for (let i = 0; i < n-1; i++){
+    const p0 = pts[Math.max(0, i-1)], p1 = pts[i], p2 = pts[i+1], p3 = pts[Math.min(n-1, i+2)];
+    drawFaint(u => parabola012(p0, p1, p2, u), 0, 2, '#10b981');
+    drawFaint(u => parabola123(p1, p2, p3, u), 1, 3, '#f97316');
+  }
+}
+function drawFaint(fn, u0, u1, color){
+  ctx.strokeStyle = color; ctx.globalAlpha = 0.5; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  const steps = 48;
+  for (let k = 0; k <= steps; k++){
+    const u = u0 + (u1 - u0) * k / steps;
+    const s = S(fn(u));
+    k ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y);
+  }
+  ctx.stroke(); ctx.globalAlpha = 1;
+}
+
+function drawBezierOverlay(){
+  const segs = bezierControlSegments();
+  ctx.strokeStyle = '#f59e0b'; ctx.setLineDash([4,4]); ctx.lineWidth = 1.4;
+  ctx.fillStyle = '#f59e0b';
+  segs.forEach(seg => {
+    ctx.beginPath();
+    seg.forEach((p, k) => { const s = S(p); k ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); });
+    ctx.stroke();
+    seg.forEach(p => { const s = S(p); ctx.fillRect(s.x-4, s.y-4, 8, 8); });
+  });
+  ctx.setLineDash([]);
+}
+
+function drawCurve(){
+  const samples = curveSamples();
+  if (samples.length < 2) return;
+  ctx.strokeStyle = CURVE_COLOR; ctx.lineWidth = 3;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.beginPath();
+  samples.forEach((p, k) => { const s = S(p); k ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); });
+  ctx.stroke();
+}
+
+function drawTangentHandles(){
+  if (state.mode !== 'hermite' || !state.showTangents) return;
+  state.points.forEach(p => {
+    const base = S(p);
+    const tip = S({ x: p.x + p.tx*HANDLE_SCALE, y: p.y + p.ty*HANDLE_SCALE });
+    ctx.strokeStyle = '#14b8a6'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(base.x, base.y); ctx.lineTo(tip.x, tip.y); ctx.stroke();
+    ctx.beginPath(); ctx.arc(tip.x, tip.y, 5, 0, TAU);
+    ctx.fillStyle = '#14b8a6'; ctx.fill();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke();
+  });
+}
+
+function drawAnimatedPoint(){
+  const p = evalCurveAt(state.tGlobal);
+  if (!p) return;
+  const s = S(p);
+  ctx.beginPath(); ctx.arc(s.x, s.y, 10, 0, TAU);
+  ctx.fillStyle = 'rgba(239,68,68,0.22)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(s.x, s.y, 5, 0, TAU);
+  ctx.fillStyle = '#ef4444'; ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+  ctx.fillStyle = '#0f172a'; ctx.font = '12px "Segoe UI",sans-serif';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.fillText('t = ' + state.tGlobal.toFixed(3), s.x + 12, s.y - 8);
+}
+
+function drawControlPoints(){
+  state.points.forEach((p, i) => {
+    const s = S(p);
+    const sel = (i === state.selected), hov = (i === state.hover);
+    ctx.beginPath(); ctx.arc(s.x, s.y, sel ? 12 : 10, 0, TAU);
+    ctx.fillStyle = sel ? 'rgba(37,99,235,0.25)' : 'rgba(15,23,42,0.12)';
+    ctx.fill();
+    ctx.beginPath(); ctx.arc(s.x, s.y, POINT_R, 0, TAU);
+    ctx.fillStyle = sel ? '#2563eb' : '#0f172a'; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = hov ? '#94a3b8' : '#fff'; ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 11px "Segoe UI",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('P' + i, s.x, s.y);
+    ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+  });
+}
+
+function draw(){
+  ctx.clearRect(0, 0, W, H);
+  drawGrid();
+  document.getElementById('emptyHint').style.display = state.points.length ? 'none' : 'block';
+
+  if (state.showPolygon) drawControlPolygon();
+  if (state.mode === 'overhauser' && state.showParabolas) drawParabolas();
+  if (state.showBezier && state.mode !== 'bezier') drawBezierOverlay();
+  drawCurve();
+  drawTangentHandles();
+  if (state.points.length >= 1) drawAnimatedPoint();
+  drawControlPoints();
+}
+
+/* ============ 输入交互 ============ */
+function getMouse(e){
+  const r = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * (W / r.width),
+    y: (e.clientY - r.top)  * (H / r.height)
+  };
+}
+function hitTestPoint(m){
+  let best = -1, bestD = HIT_R * HIT_R;
+  state.points.forEach((p, i) => {
+    const s = S(p), d = (s.x-m.x)*(s.x-m.x) + (s.y-m.y)*(s.y-m.y);
+    if (d < bestD){ bestD = d; best = i; }
+  });
+  return best;
+}
+function hitTestTangent(m){
+  for (let i = 0; i < state.points.length; i++){
+    const p = state.points[i];
+    const s = S({ x: p.x + p.tx*HANDLE_SCALE, y: p.y + p.ty*HANDLE_SCALE });
+    if ((s.x-m.x)*(s.x-m.x) + (s.y-m.y)*(s.y-m.y) < HIT_R*HIT_R) return i;
+  }
+  return -1;
+}
+
+let downPos = null, moved = false;
+
+canvas.addEventListener('mousedown', e => {
+  const m = getMouse(e);
+  downPos = m; moved = false;
+  const ptIdx = hitTestPoint(m);
+  const tanIdx = (state.mode === 'hermite') ? hitTestTangent(m) : -1;
+  if (ptIdx >= 0){
+    state.dragging = { type: 'point', index: ptIdx };
+    state.selected = ptIdx;
+  } else if (tanIdx >= 0){
+    state.dragging = { type: 'tan', index: tanIdx };
+  } else {
+    state.dragging = null;
+  }
+});
+
+canvas.addEventListener('mousemove', e => {
+  const m = getMouse(e);
+  if (state.dragging){
+    if (downPos && (Math.abs(m.x-downPos.x) + Math.abs(m.y-downPos.y)) > 2) moved = true;
+    if (state.dragging.type === 'point'){
+      const p = state.points[state.dragging.index];
+      p.x = clamp(m.x / W, 0, 1);
+      p.y = clamp(m.y / H, 0, 1);
+      recomputeAutoTangents();
+    } else {
+      const p = state.points[state.dragging.index];
+      p.tx = (m.x / W - p.x) / HANDLE_SCALE;
+      p.ty = (m.y / H - p.y) / HANDLE_SCALE;
+      p.manualTan = true;
+    }
+    draw();
+  } else {
+    const h = hitTestPoint(m);
+    state.hover = h;
+    canvas.style.cursor = (h >= 0 || (state.mode==='hermite' && hitTestTangent(m)>=0)) ? 'grab' : 'default';
+    draw();
+  }
+});
+
+canvas.addEventListener('mouseup', e => {
+  const m = getMouse(e);
+  if (!state.dragging && !moved){
+    const onPoint = hitTestPoint(m) >= 0;
+    const onTan = state.mode==='hermite' && hitTestTangent(m) >= 0;
+    if (!onPoint && !onTan){
+      addPoint(clamp(m.x/W, 0, 1), clamp(m.y/H, 0, 1));
+    }
+  }
+  state.dragging = null; downPos = null;
+});
+
+canvas.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  const m = getMouse(e);
+  const i = hitTestPoint(m);
+  if (i >= 0) deletePoint(i);
+});
+
+window.addEventListener('keydown', e => {
+  if (e.key === 'Delete' || e.key === 'Backspace'){
+    if (state.selected >= 0){ e.preventDefault(); deletePoint(state.selected); }
+  } else if (e.key === 'Escape'){
+    state.selected = -1; draw();
+  }
+});
+
+/* ============ 公式面板 ============ */
+function formulaHTML(){
+  switch (state.mode){
+    case 'linear': return `
+      <p><b>线性插值 (Lerp)</b></p>
+      <p>P(t) = (1−t)·P<sub>0</sub> + t·P<sub>1</sub>，t ∈ [0,1]</p>
+      <p>相邻两点之间用直线段连接，即控制多边形本身。</p>
+      <p><b>转 Bézier（1 次）</b>：B<sub>0</sub>=P<sub>0</sub>，B<sub>1</sub>=P<sub>1</sub></p>`;
+
+    case 'hermite': return `
+      <p><b>Hermite 曲线</b>（由端点 + 切向量定义）</p>
+      <p>P(t) = H<sub>00</sub>P<sub>0</sub> + H<sub>10</sub>T<sub>0</sub> + H<sub>01</sub>P<sub>1</sub> + H<sub>11</sub>T<sub>1</sub></p>
+      <p>H<sub>00</sub>=2t³−3t²+1，H<sub>10</sub>=t³−2t²+t<br>
+         H<sub>01</sub>=−2t³+3t²，H<sub>11</sub>=t³−t²</p>
+      <pre>      [ 2 -2  1  1]
+M_H = [-3  3 -2 -1]
+      [ 0  0  1  0]
+      [ 1  0  0  0]</pre>
+      <p><b>转 Bézier（3 次）</b>：<br>
+        B<sub>0</sub>=P<sub>0</sub>，B<sub>1</sub>=P<sub>0</sub>+T<sub>0</sub>/3，<br>
+        B<sub>2</sub>=P<sub>1</sub>−T<sub>1</sub>/3，B<sub>3</sub>=P<sub>1</sub></p>
+      <p class="note">拖动绿色切线手柄可调整切向量；「重置切线」按 (P<sub>i+1</sub>−P<sub>i−1</sub>)/2 自动计算，此时等价于 Catmull-Rom。</p>`;
+
+    case 'catmullrom': return `
+      <p><b>Catmull-Rom 样条</b>（插值所有控制点，张力 τ）</p>
+      <p>P(t) = C<sub>0</sub>P<sub>0</sub> + C<sub>1</sub>P<sub>1</sub> + C<sub>2</sub>P<sub>2</sub> + C<sub>3</sub>P<sub>3</sub></p>
+      <p>C<sub>0</sub>=−τt³+2τt²−τt，C<sub>1</sub>=(2−τ)t³+(τ−3)t²+1<br>
+         C<sub>2</sub>=(τ−2)t³+(3−2τ)t²+τt，C<sub>3</sub>=τt³−τt²</p>
+      <pre>          [-τ   2−τ  τ−2   τ ]
+M_CR =   [ 2τ   τ−3  3−2τ  −τ ]  (每列=P0..P3)
+         [ −τ    0    τ    0 ]
+         [  0    1    0    0 ]</pre>
+      <p><b>转 Bézier（3 次）</b>：<br>
+        B<sub>0</sub>=P<sub>1</sub>，B<sub>1</sub>=P<sub>1</sub>+τ(P<sub>2</sub>−P<sub>0</sub>)/3，<br>
+        B<sub>2</sub>=P<sub>2</sub>−τ(P<sub>3</sub>−P<sub>1</sub>)/3，B<sub>3</sub>=P<sub>2</sub></p>
+      <p class="note">τ = 0.5 时与「混合抛物线」完全等价。切向量在 P<sub>1</sub> 为 τ(P<sub>2</sub>−P<sub>0</sub>)。</p>`;
+
+    case 'overhauser': return `
+      <p><b>混合抛物线 (Overhauser)</b></p>
+      <p>每相邻三点构造一条抛物线：<br>
+        f 过 P<sub>0</sub>P<sub>1</sub>P<sub>2</sub>，g 过 P<sub>1</sub>P<sub>2</sub>P<sub>3</sub></p>
+      <p>C(t) = (1−t)·f + t·g，t ∈ [0,1]</p>
+      <p><b>转 Bézier（3 次）</b>：<br>
+        B<sub>0</sub>=P<sub>1</sub>，B<sub>1</sub>=P<sub>1</sub>+(P<sub>2</sub>−P<sub>0</sub>)/6，<br>
+        B<sub>2</sub>=P<sub>2</sub>−(P<sub>3</sub>−P<sub>1</sub>)/6，B<sub>3</sub>=P<sub>2</sub></p>
+      <p class="note">等价于 τ=0.5 的 Catmull-Rom（切向量 (P<sub>2</sub>−P<sub>0</sub>)/2）。画布中绿色/橙色曲线即被混合的两条抛物线。</p>`;
+
+    case 'bezier': return `
+      <p><b>Bézier 曲线（n−1 次）</b></p>
+      <p>P(t) = Σ B<sub>i</sub><sup>n</sup>(t)·P<sub>i</sub>，<br>
+        B<sub>i</sub><sup>n</sup>(t) = C(n,i)·t<sup>i</sup>(1−t)<sup>n−i</sup></p>
+      <p>用 De Casteljau 递推求值：<br>P<sub>i</sub><sup>(r)</sup> = (1−t)P<sub>i</sub><sup>(r−1)</sup> + t·P<sub>i+1</sub><sup>(r−1)</sup></p>
+      <pre>        [-1  3 -3  1]
+M_B =  [ 3 -6  3  0]  (3 次)
+       [-3  3  0  0]
+       [ 1  0  0  0]</pre>
+      <p class="note">曲线仅严格通过首、末两个控制点，其余控制点决定形状。点越多阶次越高。</p>`;
+  }
+  return '';
+}
+
+/* ============ UI 构建与事件 ============ */
+const MODES = [
+  { id:'linear',     name:'线性插值',      color:'#94a3b8' },
+  { id:'hermite',    name:'Hermite 曲线',  color:'#14b8a6' },
+  { id:'catmullrom', name:'Catmull-Rom',   color:'#2563eb' },
+  { id:'overhauser', name:'混合抛物线',    color:'#8b5cf6' },
+  { id:'bezier',     name:'Bézier 曲线',   color:'#f59e0b' },
+];
+const modeWrap = document.getElementById('modes');
+function renderModeButtons(){
+  modeWrap.innerHTML = '';
+  MODES.forEach(m => {
+    const b = document.createElement('button');
+    b.className = 'mode-btn' + (state.mode === m.id ? ' active' : '');
+    b.innerHTML = `<span class="dot" style="background:${m.color}"></span>${m.name}`;
+    b.onclick = () => { state.mode = m.id; refreshUI(); draw(); };
+    modeWrap.appendChild(b);
+  });
+}
+function refreshUI(){
+  renderModeButtons();
+  document.getElementById('rowTangents').style.display  = state.mode==='hermite'    ? 'flex' : 'none';
+  document.getElementById('rowParabolas').style.display = state.mode==='overhauser' ? 'flex' : 'none';
+  document.getElementById('rowTension').style.display   = state.mode==='catmullrom' ? 'flex' : 'none';
+  document.getElementById('tension').disabled = state.mode!=='catmullrom';
+  document.getElementById('formula').innerHTML = formulaHTML();
+  document.getElementById('tVal').textContent = state.tGlobal.toFixed(3);
+  document.getElementById('tSlider').value = state.tGlobal;
+  document.getElementById('btnPlay').textContent = state.animate ? '⏸ 暂停' : '▶ 播放';
+}
+
+// 复选框
+document.getElementById('chkPolygon').onchange = e => { state.showPolygon = e.target.checked; draw(); };
+document.getElementById('chkBezier').onchange  = e => { state.showBezier  = e.target.checked; draw(); };
+document.getElementById('chkTangents').onchange= e => { state.showTangents= e.target.checked; draw(); };
+document.getElementById('chkParabolas').onchange=e => { state.showParabolas= e.target.checked; draw(); };
+
+// 滑杆
+document.getElementById('tension').oninput = e => {
+  state.tension = parseFloat(e.target.value);
+  document.getElementById('tensionVal').textContent = state.tension.toFixed(2);
+  refreshUI(); draw();
+};
+document.getElementById('samples').oninput = e => {
+  state.samples = parseInt(e.target.value, 10);
+  document.getElementById('samplesVal').textContent = state.samples;
+  draw();
+};
+document.getElementById('tSlider').oninput = e => {
+  state.tGlobal = parseFloat(e.target.value);
+  state.animate = false;
+  refreshUI(); draw();
+};
+document.getElementById('speed').oninput = e => {
+  state.animSpeed = parseFloat(e.target.value);
+  document.getElementById('speedVal').textContent = state.animSpeed.toFixed(1);
+};
+
+// 按钮
+document.getElementById('btnPlay').onclick = () => { state.animate = !state.animate; refreshUI(); };
+document.getElementById('btnReset').onclick = () => { state.tGlobal = 0; refreshUI(); draw(); };
+document.getElementById('btnAdd').onclick = () => addPoint(0.2 + Math.random()*0.6, 0.25 + Math.random()*0.5);
+document.getElementById('btnDelete').onclick = () => { if (state.selected>=0) deletePoint(state.selected); };
+document.getElementById('btnClear').onclick = clearPoints;
+document.getElementById('btnResetTan').onclick = () => {
+  state.points.forEach(p => p.manualTan = false);
+  recomputeAutoTangents(); draw();
+};
+document.querySelectorAll('[data-preset]').forEach(b => {
+  b.onclick = () => setPreset(PRESETS[b.dataset.preset]);
+});
+
+/* ============ 尺寸与主循环 ============ */
+function resize(){
+  const wrap = document.getElementById('canvasWrap');
+  const cssW = wrap.clientWidth, cssH = wrap.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = Math.max(1, Math.round(cssW * dpr));
+  canvas.height = Math.max(1, Math.round(cssH * dpr));
+  canvas.style.width  = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  W = cssW; H = cssH;
+  draw();
+}
+window.addEventListener('resize', resize);
+
+let last = performance.now();
+function loop(now){
+  const dt = (now - last) / 1000; last = now;
+  if (state.animate && state.points.length >= 1){
+    state.tGlobal = (state.tGlobal + state.animSpeed * dt) % 1;
+    document.getElementById('tVal').textContent = state.tGlobal.toFixed(3);
+    document.getElementById('tSlider').value = state.tGlobal;
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+/* ============ 初始化 ============ */
+setPreset(PRESETS.s);
+refreshUI();
+resize();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
